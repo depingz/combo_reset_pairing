@@ -1,8 +1,8 @@
 extern crate serialport;
+use std::error::Error;
 use std::time::Duration;
 use std::{io, thread};
-use serialport::{available_ports, SerialPortType};
-use serialport::prelude::*;
+use serialport::{available_ports, SerialPortType, DataBits, StopBits, FlowControl, Parity};
 use std::str;
 
 
@@ -54,19 +54,63 @@ fn main() {
                 println!("Press Q to exit, press other key to continue!");},
         }
     }
-
     //disabling raw mode
-    //disable_raw_mode().unwrap();
-        
+    //disable_raw_mode().unwrap();     
 }
 
 fn reset_radio(){
+    let mut model_type = String::new();
+    loop{
+        print!("Please choose reset Combo or Rodeye (C/R):");
+        std::io::stdout().flush();
+        let mut model_input = String::new();
+        io::stdin()
+            .read_line(&mut model_input)
+            .expect("failed to read input.");
+        if model_input.trim().eq_ignore_ascii_case("Combo") || model_input.trim().eq_ignore_ascii_case("C"){
+            model_type = "Combo".to_string();
+            println!("Configuration for Combo");
+            break;
+        }
+        if model_input.trim().eq_ignore_ascii_case("Rodeye") || model_input.trim().eq_ignore_ascii_case("R"){
+            model_type = "Rodeye".to_string();
+            println!("Configuration for Rodeye");
+            break;
+        }else{
+            println!("Invalid input!");
+        }
+    }
+    
+    let mut cmd_1  = String::new();
+    let mut cmd_2  = String::new();
+    if model_type.eq_ignore_ascii_case("Combo"){
+        cmd_1 = "261ECONF/FTR/0/FF11D80F\n".to_string();
+        cmd_2 = "261ECONF/FTR/0/FF16D80F\n".to_string();
+    }else if model_type.eq_ignore_ascii_case("Rodeye") {
+        cmd_1 = "261ECONF/FTR/0/FF11D80F\n".to_string(); //  "0/CONF/FTR/0/FF11D80F"
+        cmd_2 = "261ECONF/FTR/0/FF13FFFF\n".to_string(); //  "0/CONF/FTR/0/FF13FFFF"
+    }else{
+        println!("Found no respetive commands!");
+    }
     let port_name = get_port_name();
-    let mut cmd  = "261ECONF/FTR/0/FF11D80F\r\n";
-    print!("{}",send_cmd(&port_name, &cmd));
+
+    let mut resp_1 = String::new();
+    match send_cmd(&port_name, &cmd_1){
+        Ok(feedback) => resp_1 = feedback,
+        Err(e) => println!("{}", e),
+    };
     thread::sleep(Duration::from_millis(500));
-    cmd = "261ECONF/FTR/0/FF16D80F\r\n";
-    print!("{}",send_cmd(&port_name, &cmd));
+
+    let mut resp_2 = String::new();
+    match send_cmd(&port_name, &cmd_2){
+        Ok(feedback) => resp_2 = feedback,
+        Err(e) => println!("{}", e),
+    };
+    if resp_1 == "1E26OK\n" && resp_2 == "1E26OK\n"{
+        println!("Succeed!");
+    }else{
+        println!("Error resetting CT301!");
+    }
 }
 
 fn get_port_name() -> String{
@@ -79,7 +123,6 @@ fn get_port_name() -> String{
                 n => println!("Found {} ports:", n),
             };
             for p in ports {
-
                 print!("  {}", p.port_name);
                 port_list.push(p.port_name);
                 match p.port_type {
@@ -109,7 +152,6 @@ fn get_port_name() -> String{
         }
     }
 
-    //let mut port_name = String::new();
     loop{
         print!("Please enter COM port number:");
         std::io::stdout().flush();
@@ -124,43 +166,32 @@ fn get_port_name() -> String{
         if ! port_list.contains(&port_name) {
             println!("The port number {} is invalid!", &port_name);
         }else{
-            println!("Trying with {}", &port_name);
             return port_name;
         }
     }
 }
 
-fn send_cmd(port_name: &str, cmd: &str) -> String{
-    let settings = SerialPortSettings {
-        baud_rate: 115200,
-        data_bits: DataBits::Eight,
-        flow_control: FlowControl::None,
-        parity: Parity::None,
-        stop_bits: StopBits::One,
-        timeout: Duration::from_millis(1000),
-    };
+fn send_cmd(port_name: &str, cmd: &str) -> Result<String, Box<dyn Error>>{
+    let baud_rate = 115_200;
+    let mut port = serialport::new(port_name, baud_rate)
+        .data_bits(DataBits::Eight)
+        .stop_bits(StopBits::One)
+        .flow_control(FlowControl::None)
+        .parity(Parity::None)
+        .timeout(Duration::from_millis(1_000))
+        .open()
+        .map_err(|ref e| format!("Port '{}' not available: {}", &port_name, e))?;
+    println!("Connected to {} at {} baud", &port_name, &baud_rate);
 
-    match serialport::open_with_settings(&port_name, & settings){
-        Ok(mut port) => {
-            match port.write_all(cmd.as_bytes()){
-                Ok(_) =>{
-                    let mut serial_buf: Vec<u8> = vec![0; 32];
-                    match port.read(&mut serial_buf){
-                        Ok(_) =>{
-                            let readout = String::from_utf8(serial_buf).unwrap_or("Found invalid UTF-8\n".to_string());
-                            let readout = readout.trim_matches(char::from(0));
-                            return readout.to_string();
-                        },
-                        Err(_e) => return "Error read data from port!\n".to_string(),
-                    }
-                },
-                Err(_e) => return "Error write commands to port!\n".to_string(),
-            }
-        },
-        Err(e) => {
-        e.to_string()
-        },
-    }
+    port.write_all(cmd.as_bytes()).map_err(|ref e| format!("Error while writing data to the port: {}",e))?;
+    println!("Sent data: {:?}", &cmd);
+
+    let mut serial_buf: Vec<u8> = vec![0; 32];
+    port.read(&mut serial_buf).map_err(|ref e| format!("Error while reading data from the port: {}",e))?;
+    let mut feedback = String::from_utf8(serial_buf).map_err(|ref e| format!("Found invalid UTF-8: {}\n",e))?;
+    feedback = feedback.trim_matches(char::from(0)).to_string();
+    println!("Port response: {:?}",&feedback);
+    Ok(feedback)
 }
 
 
