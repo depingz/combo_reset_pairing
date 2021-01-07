@@ -159,14 +159,20 @@ fn get_port_name() -> String{
         io::stdin()
             .read_line(&mut port_num)
             .expect("failed to read input.");
-        port_num.trim().parse::<i32>().expect("invalid input");
-        let mut port_name = "COM".to_owned() + &port_num.to_string();
-        let len = &port_name.len();
-        &port_name.truncate(len - 2);
-        if ! port_list.contains(&port_name) {
-            println!("The port number {} is invalid!", &port_name);
-        }else{
-            return port_name;
+        match port_num.trim().parse::<i32>(){
+            Ok(num) => {
+                let mut port_name = "COM".to_owned() + &port_num.to_string();
+                let len = &port_name.len();
+                &port_name.truncate(len - 2);
+                if ! port_list.contains(&port_name) {
+                    println!("The port number {} is invalid!", &port_name);
+                }else{
+                    return port_name;
+                }
+            },
+            Err(e) =>{
+                println!("The port number is invalid!");
+            }
         }
     }
 }
